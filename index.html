@@ -4,6 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
   <title>Auto-Explosion – Online</title>
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#00e5ff">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Auto-Explosion">
+  <link rel="apple-touch-icon" href="icon-192.png">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; touch-action: none; user-select: none; }
     body { background: #111; overflow: hidden; font-family: system-ui, sans-serif; color: white; }
@@ -399,7 +405,7 @@
       ctx.fillStyle = '#1a1a2e';
       ctx.fillRect(0, 0, width, height);
       cars.forEach(c => c.draw());
-      if (gameRunning) player.draw();
+        if (gameRunning && player) player.draw();
       particles.forEach(p => p.draw());
     }
 
@@ -433,14 +439,14 @@
     canvas.addEventListener('mouseup', () => { touchX = null; touchY = null; });
 
     document.getElementById('startBtn').onclick = () => {
-      showScreen(null);
       document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
       resetGame();
+      gameRunning = true;
     };
     document.getElementById('restartBtn').onclick = () => {
-      showScreen(null);
       document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
       resetGame();
+      gameRunning = true;
     };
     document.getElementById('backToMenuBtn').onclick = () => {
       showScreen('startScreen');
@@ -450,6 +456,13 @@
     window.addEventListener('resize', resize);
     resize();
     requestAnimationFrame(loop);
+
+    // Service Worker registrieren (für PWA)
+    if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('./sw.js')
+      .then(() => console.log('PWA bereit'))
+      .catch(err => console.log('SW Fehler:', err));
+    }
   </script>
 </body>
 </html>
