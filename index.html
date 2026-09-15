@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Auto-Explosion – Online</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; touch-action: none; user-select: none; }
+    body { background: #111; overflow: hidden; font-family: system-ui, sans-serif; color: white; }
+    #gameCanvas { display: block; background: #1a1a2e; }
+    #ui { position: absolute; top: 0; left: 0; width: 100%; pointer-events: none; padding: 12px 15px; }
+    #score { font-size: 22px; font-weight: bold; text-shadow: 0 2px 4px black; }
+    #userInfo { font-size: 14px; opacity: 0.85; margin-top: 2px; }
+
+    .screen {
+      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(0,0,0,0.92); display: none; flex-direction: column;
+      justify-content: center; align-items: center; z-index: 20; text-align: center; padding: 20px;
+    }
+    .screen.active { display: flex; }
+
+    h1 { font-size: 32px; margin-bottom: 12px; color: #ffcc00; }
+    h2 { font-size: 24px; margin-bottom: 15px; }
+    p { font-size: 16px; margin-bottom: 8px; max-width: 340px; line-height: 1.4; }
+
+    input {
+      padding: 12px 16px; font-size: 16px; border-radius: 10px; border: none;
+      width: 260px; margin: 6px 0; text-align: center;
+    }
+    button {
+      padding: 13px 30px; font-size: 17px; border: none; border-radius: 12px;
+      cursor: pointer; font-weight: bold; margin: 6px; color: white;
+    }
+    .btn-green { background: #00c853; }
+    .btn-blue { background: #2196f3; }
+    .btn-red { background: #ff4444; }
+    .btn-gray { background: #555; }
+
+    #leaderboard {
+      background: rgba(255,255,255,0.08); padding: 12px 20px; border-radius: 12px;
+      margin: 12px 0; min-width: 280px; max-height: 220px; overflow-y: auto; text-align: left;
+    }
+    #leaderboard div { padding: 5px 0; border-bottom: 1px solid rgba(255,255,255,0.12); font-size: 15px; }
+    #leaderboard div:last-child { border-bottom: none; }
+
+    .error { color: #ff6b6b; font-size: 14px; margin-top: 8px; min-height: 20px; }
+    .success { color: #69f0ae; font-size: 14px; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas"></canvas>
+  <div id="ui">
+    <div id="score">Punkte: 0</div>
+    <div id="userInfo"></div>
+  </div>
+
+  <!-- LOGIN / REGISTER -->
+  <div id="authScreen" class="screen active">
+    <h1>🚗 Auto-Explosion</h1>
+    <p>Mit Account spielen & mit anderen konkurrieren</p>
+
+    <div id="loginForm">
+      <input type="email" id="email" placeholder="E-Mail">
+      <input type="password" id="password" placeholder="Passwort">
+      <div class="error" id="authError"></div>
+      <button class="btn-green" id="loginBtn">Anmelden</button>
+      <button class="btn-blue" id="showRegisterBtn">Account erstellen</button>
+    </div>
+
+    <div id="registerForm" style="display:none;">
+      <input type="text" id="nickname" placeholder="Nickname (sichtbar)" maxlength="14">
+      <input type="email" id="regEmail" placeholder="E-Mail">
+      <input type="password" id="regPassword" placeholder="Passwort (min. 6 Zeichen)">
+      <div class="error" id="regError"></div>
+      <button class="btn-green" id="registerBtn">Registrieren</button>
+      <button class="btn-gray" id="showLoginBtn">Zurück zum Login</button>
+    </div>
+  </div>
+
+  <!-- START SCREEN -->
+  <div id="startScreen" class="screen">
+    <h1>🚗 Auto-Explosion</h1>
+    <p id="welcomeText"></p>
+    <div id="leaderboard"></div>
+    <button class="btn-green" id="startBtn">Spiel starten</button>
+    <button class="btn-gray" id="logoutBtn">Abmelden</button>
+  </div>
+
+  <!-- GAME OVER -->
+  <div id="gameOver" class="screen">
+    <h1>💥 BOOM!</h1>
+    <p>Du hast <span id="finalScore">0</span> Punkte erreicht</p>
+    <p id="personalBest"></p>
+    <div id="leaderboard2"></div>
+    <button class="btn-red" id="restartBtn">Nochmal spielen</button>
+    <button class="btn-gray" id="backToMenuBtn">Menü</button>
+  </div>
+
+  <!-- Firebase SDK -->
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+
+  <script>
+    // ========== FIREBASE CONFIG ==========
+    const firebaseConfig = {
+      apiKey: "AIzaSyBtMTXuQTFYLw_IHqplOdbIc4ehhhWZHyM",
+      authDomain: "topf-gegen-kopf.firebaseapp.com",
+      projectId: "topf-gegen-kopf",
+      storageBucket: "topf-gegen-kopf.firebasestorage.app",
+      messagingSenderId: "559508028902",
+      appId: "1:559508028902:web:2941360df86e37ca692a27"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const auth = firebase.auth();
+    const db = firebase.firestore();
+
+    // ========== SPIEL VARIABLEN ==========
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    let width, height, player, cars = [], particles = [], score = 0, gameRunning = false, lastTime = 0, spawnTimer = 0;
+    let keys = {}, touchX = null, touchY = null;
+    let currentUser = null;
+    let userData = null;
+
+    // ========== AUTH ==========
+    auth.onAuthStateChanged(async (user) => {
+      if (user) {
+        currentUser = user;
+        const doc = await db.collection('users').doc(user.uid).get();
+        userData = doc.exists ? doc.data() : { nickname: 'Spieler', highscore: 0 };
+        document.getElementById('userInfo').textContent = userData.nickname + ' | Highscore: ' + userData.highscore;
+        document.getElementById('welcomeText').textContent = 'Willkommen, ' + userData.nickname + '!';
+        showScreen('startScreen');
+        loadLeaderboard();
+      } else {
+        currentUser = null;
+        userData = null;
+        showScreen('authScreen');
+      }
+    });
+
+    document.getElementById('showRegisterBtn').onclick = () => {
+      document.getElementById('loginForm').style.display = 'none';
+      document.getElementById('registerForm').style.display = 'block';
+      document.getElementById('authError').textContent = '';
+    };
+    document.getElementById('showLoginBtn').onclick = () => {
+      document.getElementById('registerForm').style.display = 'none';
+      document.getElementById('loginForm').style.display = 'block';
+      document.getElementById('regError').textContent = '';
+    };
+
+    document.getElementById('loginBtn').onclick = async () => {
+      const email = document.getElementById('email').value.trim();
+      const password = document.getElementById('password').value;
+      const err = document.getElementById('authError');
+      err.textContent = '';
+      try {
+        await auth.signInWithEmailAndPassword(email, password);
+      } catch (e) {
+        err.textContent = 'Login fehlgeschlagen: ' + e.message;
+      }
+    };
+
+    document.getElementById('registerBtn').onclick = async () => {
+      const nickname = document.getElementById('nickname').value.trim();
+      const email = document.getElementById('regEmail').value.trim();
+      const password = document.getElementById('regPassword').value;
+      const err = document.getElementById('regError');
+      err.textContent = '';
+
+      if (!nickname || nickname.length < 2) {
+        err.textContent = 'Nickname muss mindestens 2 Zeichen haben';
+        return;
+      }
+      if (password.length < 6) {
+        err.textContent = 'Passwort muss mindestens 6 Zeichen haben';
+        return;
+      }
+
+      try {
+        const cred = await auth.createUserWithEmailAndPassword(email, password);
+        await db.collection('users').doc(cred.user.uid).set({
+          nickname: nickname,
+          highscore: 0,
+          createdAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+      } catch (e) {
+        err.textContent = 'Registrierung fehlgeschlagen: ' + e.message;
+      }
+    };
+
+    document.getElementById('logoutBtn').onclick = () => auth.signOut();
+
+    // ========== LEADERBOARD ==========
+    async function loadLeaderboard() {
+      const snap = await db.collection('users')
+        .orderBy('highscore', 'desc')
+        .limit(10)
+        .get();
+
+      let html = '<strong>🏆 Bestenliste</strong><br><br>';
+      let rank = 1;
+      snap.forEach(doc => {
+        const d = doc.data();
+        html += `<div>${rank}. <strong>${d.nickname}</strong> — ${d.highscore} Punkte</div>`;
+        rank++;
+      });
+      if (rank === 1) html += '<div>Noch keine Einträge</div>';
+
+      document.getElementById('leaderboard').innerHTML = html;
+      document.getElementById('leaderboard2').innerHTML = html;
+    }
+
+    // ========== SPIEL LOGIK ==========
+    function showScreen(id) {
+      document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+      document.getElementById(id).classList.add('active');
+    }
+
+    class Player {
+      constructor() {
+        this.radius = 18;
+        this.x = width / 2;
+        this.y = height / 2;
+        this.speed = 5;
+        this.color = '#00e5ff';
+      }
+      update() {
+        if (keys['ArrowUp'] || keys['w'] || keys['W']) this.y -= this.speed;
+        if (keys['ArrowDown'] || keys['s'] || keys['S']) this.y += this.speed;
+        if (keys['ArrowLeft'] || keys['a'] || keys['A']) this.x -= this.speed;
+        if (keys['ArrowRight'] || keys['d'] || keys['D']) this.x += this.speed;
+        if (touchX !== null && touchY !== null) {
+          const dx = touchX - this.x, dy = touchY - this.y;
+          const dist = Math.sqrt(dx*dx + dy*dy);
+          if (dist > 5) {
+            this.x += (dx / dist) * this.speed;
+            this.y += (dy / dist) * this.speed;
+          }
+        }
+        this.x = Math.max(this.radius, Math.min(width - this.radius, this.x));
+        this.y = Math.max(this.radius, Math.min(height - this.radius, this.y));
+      }
+      draw() {
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+        ctx.fillStyle = this.color;
+        ctx.fill();
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+        ctx.fillStyle = '#000';
+        ctx.beginPath();
+        ctx.arc(this.x - 6, this.y - 4, 3, 0, Math.PI * 2);
+        ctx.arc(this.x + 6, this.y - 4, 3, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    class Car {
+      constructor() {
+        this.width = 40 + Math.random() * 20;
+        this.height = 22 + Math.random() * 10;
+        this.speed = 2.5 + Math.random() * 3;
+        this.color = `hsl(${Math.random()*360}, 80%, 55%)`;
+        const side = Math.floor(Math.random() * 4);
+        if (side === 0) { this.x = Math.random()*width; this.y = -60; this.vx = (Math.random()-0.5)*2; this.vy = this.speed; }
+        else if (side === 1) { this.x = Math.random()*width; this.y = height+60; this.vx = (Math.random()-0.5)*2; this.vy = -this.speed; }
+        else if (side === 2) { this.x = -60; this.y = Math.random()*height; this.vx = this.speed; this.vy = (Math.random()-0.5)*2; }
+        else { this.x = width+60; this.y = Math.random()*height; this.vx = -this.speed; this.vy = (Math.random()-0.5)*2; }
+      }
+      update() { this.x += this.vx; this.y += this.vy; }
+      draw() {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.rotate(Math.atan2(this.vy, this.vx));
+        ctx.fillStyle = this.color;
+        ctx.fillRect(-this.width/2, -this.height/2, this.width, this.height);
+        ctx.fillStyle = 'rgba(200,230,255,0.7)';
+        ctx.fillRect(-this.width/4, -this.height/3, this.width/2.5, this.height/1.6);
+        ctx.fillStyle = '#222';
+        ctx.fillRect(-this.width/2+4, -this.height/2-4, 10, 5);
+        ctx.fillRect(this.width/2-14, -this.height/2-4, 10, 5);
+        ctx.fillRect(-this.width/2+4, this.height/2-1, 10, 5);
+        ctx.fillRect(this.width/2-14, this.height/2-1, 10, 5);
+        ctx.restore();
+      }
+      collidesWith(p) {
+        const cx = Math.max(this.x - this.width/2, Math.min(p.x, this.x + this.width/2));
+        const cy = Math.max(this.y - this.height/2, Math.min(p.y, this.y + this.height/2));
+        const dx = p.x - cx, dy = p.y - cy;
+        return dx*dx + dy*dy < p.radius * p.radius;
+      }
+      isOffScreen() {
+        return this.x < -100 || this.x > width+100 || this.y < -100 || this.y > height+100;
+      }
+    }
+
+    class Particle {
+      constructor(x, y, color) {
+        this.x = x; this.y = y;
+        this.vx = (Math.random()-0.5)*12;
+        this.vy = (Math.random()-0.5)*12;
+        this.life = 1;
+        this.decay = 0.02 + Math.random()*0.03;
+        this.size = 4 + Math.random()*8;
+        this.color = color || `hsl(${Math.random()*60},100%,60%)`;
+      }
+      update() {
+        this.x += this.vx; this.y += this.vy;
+        this.vx *= 0.96; this.vy *= 0.96;
+        this.life -= this.decay;
+      }
+      draw() {
+        ctx.globalAlpha = this.life;
+        ctx.fillStyle = this.color;
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.size * this.life, 0, Math.PI*2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+    }
+
+    function resize() {
+      width = window.innerWidth;
+      height = window.innerHeight;
+      canvas.width = width;
+      canvas.height = height;
+      if (player) {
+        player.x = width / 2;
+        player.y = height / 2;
+      }
+    }
+
+    function resetGame() {
+      player = new Player();
+      cars = [];
+      particles = [];
+      score = 0;
+      spawnTimer = 0;
+      gameRunning = true;
+      document.getElementById('score').textContent = 'Punkte: 0';
+    }
+
+    async function saveScoreIfBetter() {
+      const final = Math.floor(score);
+      document.getElementById('finalScore').textContent = final;
+
+      if (final > (userData.highscore || 0)) {
+        await db.collection('users').doc(currentUser.uid).update({
+          highscore: final
+        });
+        userData.highscore = final;
+        document.getElementById('personalBest').textContent = '🎉 Neuer persönlicher Rekord!';
+        document.getElementById('userInfo').textContent = userData.nickname + ' | Highscore: ' + final;
+      } else {
+        document.getElementById('personalBest').textContent = 'Dein Rekord: ' + userData.highscore;
+      }
+      loadLeaderboard();
+    }
+
+    function gameOver(car) {
+      gameRunning = false;
+      for (let i = 0; i < 40; i++) particles.push(new Particle(player.x, player.y, car.color));
+      for (let i = 0; i < 20; i++) particles.push(new Particle(car.x, car.y, 'orange'));
+      setTimeout(async () => {
+        await saveScoreIfBetter();
+        showScreen('gameOver');
+      }, 700);
+    }
+
+    function update(dt) {
+      if (!gameRunning) {
+        particles.forEach(p => p.update());
+        particles = particles.filter(p => p.life > 0);
+        return;
+      }
+      player.update();
+      spawnTimer += dt;
+      if (spawnTimer > Math.max(0.4, 1.3 - score/70)) {
+        cars.push(new Car());
+        spawnTimer = 0;
+      }
+      for (let i = cars.length-1; i >= 0; i--) {
+        const car = cars[i];
+        car.update();
+        if (car.collidesWith(player)) { gameOver(car); return; }
+        if (car.isOffScreen()) cars.splice(i, 1);
+      }
+      particles.forEach(p => p.update());
+      particles = particles.filter(p => p.life > 0);
+      score += dt * 10;
+      document.getElementById('score').textContent = 'Punkte: ' + Math.floor(score);
+    }
+
+    function draw() {
+      ctx.fillStyle = '#1a1a2e';
+      ctx.fillRect(0, 0, width, height);
+      cars.forEach(c => c.draw());
+      if (gameRunning) player.draw();
+      particles.forEach(p => p.draw());
+    }
+
+    function loop(t) {
+      if (!lastTime) lastTime = t;
+      const dt = Math.min((t - lastTime)/1000, 0.05);
+      lastTime = t;
+      update(dt);
+      draw();
+      requestAnimationFrame(loop);
+    }
+
+    // Controls
+    window.addEventListener('keydown', e => {
+      keys[e.key] = true;
+      if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)) e.preventDefault();
+    });
+    window.addEventListener('keyup', e => keys[e.key] = false);
+
+    function setTouch(e) {
+      const r = canvas.getBoundingClientRect();
+      const t = e.touches ? e.touches[0] : e;
+      touchX = t.clientX - r.left;
+      touchY = t.clientY - r.top;
+    }
+    canvas.addEventListener('touchstart', e => { e.preventDefault(); setTouch(e); }, {passive:false});
+    canvas.addEventListener('touchmove', e => { e.preventDefault(); setTouch(e); }, {passive:false});
+    canvas.addEventListener('touchend', () => { touchX = null; touchY = null; });
+    canvas.addEventListener('mousedown', setTouch);
+    canvas.addEventListener('mousemove', e => { if (e.buttons) setTouch(e); });
+    canvas.addEventListener('mouseup', () => { touchX = null; touchY = null; });
+
+    document.getElementById('startBtn').onclick = () => {
+      showScreen(null);
+      document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+      resetGame();
+    };
+    document.getElementById('restartBtn').onclick = () => {
+      showScreen(null);
+      document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+      resetGame();
+    };
+    document.getElementById('backToMenuBtn').onclick = () => {
+      showScreen('startScreen');
+      loadLeaderboard();
+    };
+
+    window.addEventListener('resize', resize);
+    resize();
+    requestAnimationFrame(loop);
+  </script>
+</body>
+</html>
